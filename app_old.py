@@ -459,17 +459,56 @@ PROBLEM_STATEMENTS = {
 def load_students():
     return pd.read_excel(EXCEL_FILE, sheet_name="Sheet1")
 
+def parse_dates_mixed(series):
+    """
+    Parse a date column that may contain mixed formats:
+    - Excel numeric dates (float/int)
+    - ISO strings: YYYY-MM-DD
+    - Indian strings: DD-MM-YYYY
+    - datetime objects already
+    Returns a Series of pd.Timestamp (NaT for unparseable values).
+    """
+    def parse_one(val):
+        if pd.isnull(val):
+            return pd.NaT
+        if isinstance(val, (pd.Timestamp, datetime)):
+            return pd.Timestamp(val)
+        s = str(val).strip()
+        if not s or s.lower() in ('nat', 'nan', 'none', ''):
+            return pd.NaT
+        # Try ISO format first (YYYY-MM-DD) — unambiguous
+        try:
+            return pd.Timestamp(s)
+        except Exception:
+            pass
+        # Try DD-MM-YYYY
+        try:
+            return pd.Timestamp(datetime.strptime(s, "%d-%m-%Y"))
+        except Exception:
+            pass
+        # Try DD/MM/YYYY
+        try:
+            return pd.Timestamp(datetime.strptime(s, "%d/%m/%Y"))
+        except Exception:
+            pass
+        # Last resort — let pandas guess
+        try:
+            return pd.to_datetime(s, dayfirst=True)
+        except Exception:
+            return pd.NaT
+    return series.apply(parse_one)
+
 def load_logs():
     df = pd.read_excel(EXCEL_FILE, sheet_name="Sheet2")
     if 'date' in df.columns:
-        # Excel stores dates as datetime64 — convert cleanly and normalize to midnight
-        df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.normalize()
+        df['date'] = parse_dates_mixed(df['date'])
     return df
 
 def save_log(new_data):
     df_logs = load_logs()
     new_entry = pd.DataFrame([new_data])
-    new_entry['date'] = pd.to_datetime(new_entry['date'], errors='coerce').dt.normalize()
+    # Always normalise to Timestamp then store — ensures ISO format in Excel
+    new_entry['date'] = parse_dates_mixed(new_entry['date'])
     df_logs = pd.concat([df_logs, new_entry], ignore_index=True)
 
     with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
@@ -1050,7 +1089,7 @@ if page == "Student":
                     "name": student["name"],
                     "faculty": student["guide"],
                     # FIX: Store date as datetime object for consistent filtering
-                    "date": datetime.now().strftime("%Y-%m-%d"),  # Use now() for correct local date including night hours
+                    "date": datetime.today().strftime("%Y-%m-%d"),
                     "start_time": str(start_time),
                     "end_time": str(end_time),
                     "description": description.strip()
@@ -1152,7 +1191,7 @@ if page == "Professor":
             key="prof_sidebar_options"
         )
 
-        st.subheader(" Professor Dashboard")
+        st.subheader("👨‍🏫 Professor Dashboard")
 
         # ---- VIEW ALL LOGS ----
         if prof_option == "View All Logs":
@@ -1338,6 +1377,32 @@ if page == "Professor":
         elif prof_option == "Generate Report":
             st.markdown("### 📊 Generate Reports")
 
+            # ── DATE DIAGNOSTIC ────────────────────────────────────────
+            with st.expander("🔍 Date Diagnostic (click to debug missing logs)", expanded=False):
+                diag_df = load_logs()
+                st.write(f"**Total rows in Log.xlsx Sheet2:** {len(diag_df)}")
+                if 'date' in diag_df.columns:
+                    nat_count = diag_df['date'].isna().sum()
+                    st.write(f"**Rows with unparseable dates (NaT):** {nat_count}")
+                    if nat_count > 0:
+                        st.warning("Some dates could NOT be parsed — these rows will never appear in any report.")
+                        st.write("Sample of unparseable rows:")
+                        # Show raw values from Excel before parsing
+                        raw_df = pd.read_excel(EXCEL_FILE, sheet_name="Sheet2")
+                        bad_idx = diag_df[diag_df['date'].isna()].index
+                        st.dataframe(raw_df.loc[bad_idx, ['reg_no','name','date']].head(20))
+                    valid = diag_df.dropna(subset=['date'])
+                    if not valid.empty:
+                        st.write(f"**Date range in file:** {valid['date'].min().strftime('%d-%m-%Y')} → {valid['date'].max().strftime('%d-%m-%Y')}")
+                        st.write(f"**5 most recent log dates:**")
+                        recent = valid.sort_values('date', ascending=False).head(5)[['reg_no','name','date']]
+                        recent['date'] = recent['date'].dt.strftime('%d-%m-%Y')
+                        st.dataframe(recent)
+                        # Show raw date values from the last 5 rows to diagnose format
+                        raw_df2 = pd.read_excel(EXCEL_FILE, sheet_name="Sheet2")
+                        st.write("**Raw date values (last 5 rows) as stored in Excel:**")
+                        st.write(raw_df2['date'].tail(5).tolist())
+            # ─────────────────────────────────────────────────────────────
 
             report_type = st.radio(
                 "Select Report Type",
@@ -1388,12 +1453,10 @@ if page == "Professor":
                         st.error("'From Date' must be before 'To Date'.")
                     else:
                         fresh = load_logs()
-                        # Compare as Python date objects — avoids all Timestamp/tz issues
-                        fresh["_date_only"] = fresh["date"].dt.date
                         filtered = fresh[
-                            (fresh["_date_only"] >= from_date) &
-                            (fresh["_date_only"] <= to_date)
-                        ].drop(columns=["_date_only"])
+                            (fresh["date"] >= pd.Timestamp(from_date)) &
+                            (fresh["date"] <= pd.Timestamp(to_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
+                        ]
                         st.info(f"Total logs in file: {len(fresh)} | After date filter: {len(filtered)}")
                         if not filtered.empty:
                             buf = generate_pdf(
@@ -1432,13 +1495,12 @@ if page == "Professor":
                         all_regs = {rn for rn, ps in reg_to_ps.items() if ps == selected_prob_id}
 
                         fresh = load_logs()
-                        fresh["_norm_reg"]  = fresh["reg_no"].apply(norm_reg)
-                        fresh["_date_only"] = fresh["date"].dt.date
+                        fresh["_norm_reg"] = fresh["reg_no"].apply(norm_reg)
                         filtered = fresh[
                             (fresh["_norm_reg"].isin(all_regs)) &
-                            (fresh["_date_only"] >= from_date) &
-                            (fresh["_date_only"] <= to_date)
-                        ].drop(columns=["_norm_reg", "_date_only"])
+                            (fresh["date"] >= pd.Timestamp(from_date)) &
+                            (fresh["date"] <= pd.Timestamp(to_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
+                        ].drop(columns=["_norm_reg"])
 
                         st.info(f"Total logs in file: {len(fresh)} | Matched PS {selected_prob_id}: {len(filtered)}")
                         if not filtered.empty:
@@ -1468,13 +1530,10 @@ if page == "Professor":
 
                 if st.button("Generate Current Week Report", key="week_report_btn"):
                     fresh = load_logs()
-                    fresh["_date_only"] = fresh["date"].dt.date
-                    today_date = datetime.today().date()
-                    monday_date = monday.date()
                     filtered = fresh[
-                        (fresh["_date_only"] >= monday_date) &
-                        (fresh["_date_only"] <= today_date)
-                    ].drop(columns=["_date_only"])
+                        (fresh["date"] >= monday) &
+                        (fresh["date"] <= today_end)
+                    ]
                     st.info(f"Total logs in file: {len(fresh)} | This week: {len(filtered)} | Valid dates: {fresh['date'].notna().sum()}")
                     if not filtered.empty:
                         buf = generate_pdf(
@@ -1520,16 +1579,13 @@ if page == "Professor":
                     reg_to_ps = get_reg_to_ps()
 
                     fresh = load_logs()
-                    fresh["_norm_reg"]  = fresh["reg_no"].apply(norm_reg)
-                    fresh["ps_no"]      = fresh["_norm_reg"].map(reg_to_ps).fillna("Unknown")
-                    today_date  = datetime.today().date()
-                    monday_date = monday.date()
-                    fresh["_date_only"] = fresh["date"].dt.date
+                    fresh["_norm_reg"] = fresh["reg_no"].apply(norm_reg)
+                    fresh["ps_no"] = fresh["_norm_reg"].map(reg_to_ps).fillna("Unknown")
 
                     week_logs = fresh[
-                        (fresh["_date_only"] >= monday_date) &
-                        (fresh["_date_only"] <= today_date)
-                    ].drop(columns=["_date_only"]).copy()
+                        (fresh["date"] >= monday) &
+                        (fresh["date"] <= today_end)
+                    ].copy()
 
                     if week_logs.empty:
                         st.warning(f"No logs found for the current week ({monday.strftime('%d-%m-%Y')} to {datetime.today().strftime('%d-%m-%Y')}).")
