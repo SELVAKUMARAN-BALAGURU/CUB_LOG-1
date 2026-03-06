@@ -1,4 +1,5 @@
 import streamlit as st
+import requests
 import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime, timedelta
@@ -11,38 +12,19 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import TableStyle
 
-#--------------token checker----------------
-LAB_TOKEN = "CUB_LAB_MACHINE_2026"
+LAB_IP = "117.231.194.207"   # replace with your lab public IP
 
-token_check = f"""
-<script>
-const required_token = "{LAB_TOKEN}";
-const stored_token = localStorage.getItem("lab_token");
+def get_user_ip():
+    try:
+        ip = requests.get("https://api.ipify.org").text
+        return ip
+    except:
+        return None
 
-if(stored_token !== required_token){{
-    document.body.innerHTML = `
-    <div style="font-family:sans-serif;text-align:center;margin-top:100px">
-        <h2>Access Restricted</h2>
-        <p>This system can only be accessed from the lab computer.</p>
-    </div>
-    `;
-}}
-</script>
-"""
+user_ip = get_user_ip()
 
-components.html(token_check, height=0)
-
-if st.query_params.get("setup") == "lab":
-
-    setup_script = f"""
-    <script>
-    localStorage.setItem("lab_token","{LAB_TOKEN}");
-    alert("Lab access configured successfully.");
-    window.location.href = window.location.origin;
-    </script>
-    """
-
-    components.html(setup_script, height=0)
+if user_ip != LAB_IP:
+    st.error("🚫 Access allowed only from the CUB Lab computer.")
     st.stop()
 # ---------------- Page Config ----------------
 st.set_page_config(
