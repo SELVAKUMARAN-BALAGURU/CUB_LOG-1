@@ -2,6 +2,10 @@
 /Log.xlsx
 /weekly_report.pdf
 =======
+<<<<<<< HEAD
+/Log.xlsx
+/weekly_report.pdf
+=======
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
