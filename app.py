@@ -1,5 +1,7 @@
 import streamlit as st
 import requests
+import streamlit.components.v1 as components
+import json
 import pandas as pd
 from datetime import datetime, timedelta
 import io
@@ -12,18 +14,34 @@ from reportlab.lib.units import inch
 from reportlab.platypus import TableStyle
 
 
-LAB_IP = "117.231.194.207"   # replace with your lab public IP
+LAB_IP = "117.231.194.207"   # your allowed IP
 
-def get_user_ip():
-    try:
-        ip = requests.get("https://api.ipify.org").text
-        return ip
-    except:
-        return None
+ip_script = """
+<script>
+async function getIP(){
+    const res = await fetch("https://api.ipify.org?format=json");
+    const data = await res.json();
+    const ip = data.ip;
 
-user_ip = get_user_ip()
+    const streamlitDoc = window.parent.document;
 
-if user_ip != LAB_IP:
+    const input = streamlitDoc.createElement("input");
+    input.type = "hidden";
+    input.value = ip;
+    input.id = "client_ip";
+
+    streamlitDoc.body.appendChild(input);
+}
+
+getIP();
+</script>
+"""
+
+components.html(ip_script, height=0)
+
+ip = st.text_input("client_ip", key="client_ip")
+
+if ip and ip != LAB_IP:
     st.error("🚫 Access allowed only from the CUB Lab computer.")
     st.stop()
 # ---------------- Page Config ----------------
