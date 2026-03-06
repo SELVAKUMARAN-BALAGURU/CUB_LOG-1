@@ -12,20 +12,7 @@ from reportlab.lib.units import inch
 from reportlab.platypus import TableStyle
 
 
-LAB_IP = "117.231.194.207"   # replace with your lab public IP
 
-def get_user_ip():
-    try:
-        ip = requests.get("https://api.ipify.org").text
-        return ip
-    except:
-        return None
-
-user_ip = get_user_ip()
-
-if user_ip != LAB_IP:
-    st.error("🚫 Access allowed only from the CUB Lab computer.")
-    st.stop()
 # ---------------- Page Config ----------------
 st.set_page_config(
     page_title="SASTRA COE CUB",
