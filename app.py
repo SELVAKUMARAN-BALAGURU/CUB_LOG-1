@@ -10,13 +10,33 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import TableStyle
 
-
 # ---------------- Page Config ----------------
 st.set_page_config(
     page_title="SASTRA COE CUB",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ---------------- Hardware Lock ----------------
+import winreg
+def verify_system_uuid():
+    ALLOWED_UUID = "9eea8689-b978-468a-8189-3906569ce820"
+    machine_guid = None
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Cryptography', 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            machine_guid, _ = winreg.QueryValueEx(key, 'MachineGuid')
+    except Exception:
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Cryptography') as key:
+                machine_guid, _ = winreg.QueryValueEx(key, 'MachineGuid')
+        except Exception:
+            pass
+            
+    if str(machine_guid).lower() != ALLOWED_UUID.lower():
+        st.error("🚫 **Security Alert**: This application is strictly authorized to run exclusively on the designated Host PC.")
+        st.stop()
+
+verify_system_uuid()
 # ---------------- Custom CSS ----------------
 st.markdown("""
 <style>
@@ -443,6 +463,7 @@ div[data-baseweb="calendar"] div[data-baseweb="select"] > div {
 
 # ---------------- File Paths ----------------
 EXCEL_FILE = "Log.xlsx"
+TIMETABLE_FILE = "cub (1).xlsx"
 THIRD_YEAR_FILE = "3rd_year.xlsx"
 FINAL_YEAR_FILE = "final_year.xlsx"
 
@@ -485,6 +506,145 @@ def save_professor(new_prof):
 
     with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
         df_prof.to_excel(writer, sheet_name="Sheet3", index=False)
+
+def load_active_sessions():
+    """Load active (logged-in) sessions."""
+    try:
+        df = pd.read_excel(EXCEL_FILE, sheet_name="Active_Sessions")
+        df["reg_no"] = df["reg_no"].astype(str).str.strip()
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["reg_no", "name", "faculty", "problem_no", "start_time"])
+
+def save_active_session(new_session):
+    df = load_active_sessions()
+    df = df[df["reg_no"] != str(new_session["reg_no"]).strip()]
+    df = pd.concat([df, pd.DataFrame([new_session])], ignore_index=True)
+    with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+        df.to_excel(writer, sheet_name="Active_Sessions", index=False)
+
+def remove_active_session(reg_no):
+    df = load_active_sessions()
+    df = df[df["reg_no"] != str(reg_no).strip()]
+    with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+        df.to_excel(writer, sheet_name="Active_Sessions", index=False)
+
+def load_student_hours():
+    """Load total accumulated hours per student."""
+    try:
+        df = pd.read_excel(EXCEL_FILE, sheet_name="Student_Hours")
+        df["reg_no"] = df["reg_no"].astype(str).str.strip()
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["reg_no", "name", "total_hours"])
+
+def update_student_hours(reg_no, name, hours_worked):
+    df = load_student_hours()
+    reg_no_str = str(reg_no).strip()
+    
+    if df.empty or reg_no_str not in df["reg_no"].values:
+        new_entry = {"reg_no": reg_no_str, "name": name, "total_hours": hours_worked}
+        df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+    else:
+        idx = df[df["reg_no"] == reg_no_str].index[0]
+        df.loc[idx, "total_hours"] += hours_worked
+        
+        
+    with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+        df.to_excel(writer, sheet_name="Student_Hours", index=False)
+
+def parse_time_slot(time_str):
+    """Parse '8:45 to 9:45' into two datetime.time objects for today."""
+    if not isinstance(time_str, str) or "to" not in time_str.lower():
+        return None, None
+        
+    parts = [p.strip() for p in time_str.lower().split("to")]
+    if len(parts) != 2:
+        return None, None
+        
+    def to_24_from_context(h, m, is_start=True, prev_h24=8):
+        if h == 12: return 12, m
+        if h < 8: return h + 12, m
+        if h >= 8 and h < 12:
+            if prev_h24 >= 12 or h < prev_h24:
+                return h + 12, m
+            return h, m
+        return h, m
+
+    try:
+        from datetime import time
+        sh, sm = map(int, parts[0].split(':'))
+        eh, em = map(int, parts[1].split(':'))
+        
+        start_h24, start_m24 = to_24_from_context(sh, sm, True, 8)
+        end_h24, end_m24 = to_24_from_context(eh, em, False, start_h24)
+        
+        return time(start_h24, start_m24), time(end_h24, end_m24)
+    except Exception:
+        return None, None
+
+def load_timetable(day_name):
+    """Load the schedule from cub (1).xlsx for a specific day."""
+    try:
+        df = pd.read_excel(TIMETABLE_FILE, sheet_name=day_name)
+        time_headers = df.iloc[0].values
+        student_col = df.columns[1] 
+        
+        schedule = []
+        for idx in range(1, len(df)):
+            name = df.iloc[idx][student_col]
+            if pd.isna(name): continue
+            
+            row_data = {"name": str(name).strip(), "slots": {}}
+            is_sys_occ = "system" in str(name).lower() and "occupied" in str(name).lower()
+            
+            for col_idx in range(2, len(df.columns)):
+                time_str = str(time_headers[col_idx]).strip()
+                if 'to' not in time_str.lower(): continue
+                val = df.iloc[idx, col_idx]
+                
+                if pd.notna(val):
+                    if is_sys_occ and float(val) > 0:
+                        row_data["slots"][time_str] = int(val)
+                    elif not is_sys_occ and val == 1:
+                        row_data["slots"][time_str] = True
+                
+            schedule.append(row_data)
+        
+        slots_ordered = []
+        for t in time_headers[2:]:
+            s = str(t).strip()
+            if 'to' in s.lower() and s not in slots_ordered:
+                slots_ordered.append(s)
+                
+        return schedule, slots_ordered
+    except Exception as e:
+        return [], []
+
+def load_target_hours():
+    """Load target weekly hours for each student from Sheet1."""
+    try:
+        df = pd.read_excel(TIMETABLE_FILE, sheet_name="Sheet1")
+        name_col = df.columns[1] 
+        target_col = "Total Hrs"
+        if target_col not in df.columns:
+            return {}
+            
+        targets = {}
+        import re
+        def norm(n): return "".join(sorted(re.findall(r'[a-zA-Z]+', str(n).lower())))
+        
+        for idx, row in df.iterrows():
+            if pd.notna(row[name_col]) and pd.notna(row[target_col]):
+                val = row[target_col]
+                try:
+                    targets[norm(row[name_col])] = float(val)
+                except:
+                    pass
+        return targets
+    except:
+        return {}
+
 
 def load_third_year_students():
     """Load 3rd year students from separate Excel file"""
@@ -903,7 +1063,7 @@ def render_header():
     with col1:
         st.markdown('<div class="header-logo">', unsafe_allow_html=True)
         try:
-            st.image("sastra-univercity-logo.jpg", width=120)
+            st.image("sastra_logo-Photoroom.png", width=280)
         except:
             st.markdown("📷 **Logo**")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -976,7 +1136,7 @@ components.html("""
 """, height=0)
 
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go To", ["Student", "Professor"])
+page = st.sidebar.radio("Go To", ["Student", "Professor", "TimeTable", "Live Attendance"])
 
 students_df = load_students()
 logs_df = load_logs()
@@ -1035,29 +1195,58 @@ if page == "Student":
             st.write("**Faculty Guide:**", student["guide"])
             st.write("**Date:**", datetime.today().strftime("%d-%m-%Y"))
 
-        start_time = st.time_input("Start Time")
-        end_time = st.time_input("End Time")
-        description = st.text_area("Work Description")
+        active_sessions = load_active_sessions()
+        student_session = active_sessions[active_sessions["reg_no"] == student["reg_no"]]
 
-        if st.button("Save Log"):
-            # FIX: Validate end time is after start time
-            if end_time <= start_time:
-                st.error("End Time must be after Start Time.")
-            elif not description.strip():
-                st.error("Please enter a Work Description.")
-            else:
-                new_log = {
+        if student_session.empty:
+            st.info("You haven't started your work for today.")
+            if st.button("Log In (Start Work)", type="primary"):
+                now = datetime.now()
+                new_session = {
                     "reg_no": student["reg_no"],
                     "name": student["name"],
                     "faculty": student["guide"],
-                    # FIX: Store date as datetime object for consistent filtering
-                    "date": datetime.now().strftime("%Y-%m-%d"),  # Use now() for correct local date including night hours
-                    "start_time": str(start_time),
-                    "end_time": str(end_time),
-                    "description": description.strip()
+                    "problem_no": student["problem_no"],
+                    "start_time": now.strftime("%Y-%m-%d %H:%M:%S")
                 }
-                save_log(new_log)
-                st.success("✅ Log Saved Successfully!")
+                save_active_session(new_session)
+                st.success(f"Log In saved! Work session started at {now.strftime('%I:%M %p')}.")
+                st.rerun()
+        else:
+            session_data = student_session.iloc[0]
+            start_dt = datetime.strptime(session_data["start_time"], "%Y-%m-%d %H:%M:%S")
+            
+            st.success(f"🟢 Active Work Session (Started at: {start_dt.strftime('%I:%M %p')})")
+            
+            description = st.text_area("Work Description")
+            
+            if st.button("Log Out (End Work)", type="primary"):
+                if not description.strip():
+                    st.error("Please enter a Work Description before logging out.")
+                else:
+                    end_dt = datetime.now()
+                    
+                    if end_dt < start_dt:
+                        end_dt = start_dt
+                        
+                    hours_worked = (end_dt - start_dt).total_seconds() / 3600.0
+                    
+                    new_log = {
+                        "reg_no": student["reg_no"],
+                        "name": student["name"],
+                        "faculty": student["guide"],
+                        "date": end_dt.strftime("%Y-%m-%d"), 
+                        "start_time": start_dt.strftime("%H:%M:%S"),
+                        "end_time": end_dt.strftime("%H:%M:%S"),
+                        "description": description.strip()
+                    }
+                    save_log(new_log)
+                    
+                    update_student_hours(student["reg_no"], student["name"], hours_worked)
+                    remove_active_session(student["reg_no"])
+                    
+                    st.success(f"✅ Log Out Successful! Duration: {hours_worked:.2f} hours.")
+                    st.rerun()
 
         # Show student's own logs
         st.markdown("---")
@@ -1149,14 +1338,147 @@ if page == "Professor":
 
         prof_option = st.sidebar.radio(
             "Professor Options",
-            ["View All Logs", "Problem Statement Overview", "Search by Student Name", "Generate Report"],
+            ["Live Dashboard", "Weekly Target Tracking", "View All Logs", "Problem Statement Overview", "Search by Student Name", "Generate Report"],
             key="prof_sidebar_options"
         )
 
         st.subheader(" Professor Dashboard")
 
+        # ---- LIVE DASHBOARD ----
+        if prof_option == "Live Dashboard":
+            st.markdown("### 🟢 Currently Working Students")
+            active_sessions = load_active_sessions()
+            if active_sessions.empty:
+                st.info("No students are currently logged in.")
+            else:
+                display_df = active_sessions.copy()
+                display_df["Start Time"] = pd.to_datetime(display_df["start_time"]).dt.strftime("%I:%M %p")
+                display_df["Problem Statement"] = display_df["problem_no"].apply(get_problem_statement_name)
+                
+                display_df = display_df[["reg_no", "name", "faculty", "Problem Statement", "Start Time"]]
+                display_df.columns = ["Reg No", "Name", "Faculty Guide", "Problem Statement", "Log In Time"]
+                
+                light_table(display_df)
+                
+            st.markdown("---")
+            st.markdown("### ⏱️ Total Hours Worked")
+            student_hours = load_student_hours()
+            if student_hours.empty:
+                st.info("No hours have been logged yet.")
+            else:
+                student_hours = student_hours.sort_values(by="total_hours", ascending=False)
+                student_hours.columns = ["Reg No", "Name", "Total Hours"]
+                student_hours["Total Hours"] = student_hours["Total Hours"].apply(lambda x: f"{x:.2f}")
+                light_table(student_hours)
+
+        # ---- WEEKLY TARGET TRACKING ----
+        elif prof_option == "Weekly Target Tracking":
+            st.markdown("### 🎯 Weekly Target Tracking")
+            
+            targets = load_target_hours()
+            if not targets:
+                st.warning("Could not load Target Hours from 'cub (1).xlsx' (Sheet1). Make sure the column 'Total Hrs' exists.")
+            else:
+                monday = get_monday_of_current_week()
+                fresh_logs = load_logs()
+                
+                # Filter logs for current week only
+                fresh_logs["_date_obj"] = pd.to_datetime(fresh_logs["date"], format="%Y-%m-%d", errors="coerce").dt.date
+                week_logs = fresh_logs[fresh_logs["_date_obj"] >= monday.date()].copy()
+                
+                # Sum hours per normalized student name
+                import re
+                def norm_name(n): return "".join(sorted(re.findall(r'[a-zA-Z]+', str(n).lower())))
+                
+                def _calc_hrs(r):
+                    try:
+                        s = pd.to_datetime(str(r["start_time"])).time()
+                        e = pd.to_datetime(str(r["end_time"])).time()
+                        from datetime import datetime, date, timedelta
+                        dt_s = datetime.combine(date.today(), s)
+                        dt_e = datetime.combine(date.today(), e)
+                        if dt_e < dt_s: dt_e += timedelta(days=1)
+                        return (dt_e - dt_s).total_seconds() / 3600.0
+                    except:
+                        return 0.0
+                        
+                week_logs["hours_worked"] = week_logs.apply(_calc_hrs, axis=1)
+                week_logs["_norm_name"] = week_logs["name"].apply(norm_name)
+                weekly_hours = week_logs.groupby("_norm_name")["hours_worked"].sum().to_dict()
+                
+                # Fetch 3rd and Final Year students
+                third_years = load_third_year_students()
+                final_years = load_final_year_students()
+                
+                tab1, tab2 = st.tabs(["🎓 3rd Year Tracking", "🎓 Final Year Tracking"])
+                
+                def render_tracking_table(df_students):
+                    if df_students.empty:
+                        st.info("No students found in this category.")
+                        return
+                        
+                    html = '''
+                    <div style="overflow-x:auto; border-radius:10px; border:1px solid #e2e8f0; margin-bottom:1rem;">
+                    <table style="width:100%; border-collapse:collapse; font-family:sans-serif; font-size:14px; color:#1e293b; background:#ffffff;">
+                        <thead>
+                            <tr style="background:#f8fafc; color:#475569; text-align:left; border-bottom:2px solid #cbd5e1;">
+                                <th style="padding:12px 15px;">Student Name</th>
+                                <th style="padding:12px 15px; width: 160px; text-align:center;">Weekly Status</th>
+                                <th style="padding:12px 15px; min-width: 250px;">Target Progress</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                    '''
+                    
+                    has_rows = False
+                    for idx, row in df_students.iterrows():
+                        raw_name = row["name"]
+                        if pd.isna(raw_name): continue
+                        
+                        nn = norm_name(raw_name)
+                        target_hr = targets.get(nn, 0)
+                        if target_hr <= 0: continue 
+                        
+                        worked_hr = weekly_hours.get(nn, 0.0)
+                        has_rows = True
+                        
+                        pct = min((worked_hr / target_hr) * 100, 100)
+                        is_over = worked_hr > target_hr
+                        
+                        bar_color = "#3b82f6" # Blue default
+                        if worked_hr >= target_hr:
+                            bar_color = "#eab308" if is_over else "#22c55e" # Gold if exceeded
+                        elif pct > 75:
+                            bar_color = "#8b5cf6" # purple near completion
+                            
+                        bg_tr = "#ffffff" if idx % 2 == 0 else "#f8fafc"
+                        
+                        html += f'<tr style="background:{bg_tr}; border-bottom:1px solid #e2e8f0;">'
+                        html += f'<td style="padding:12px 15px; font-weight: 500;">{raw_name}</td>'
+                        html += f'<td style="padding:12px 15px; text-align:center;"><b>{worked_hr:.1f}</b> / {target_hr:.0f} hr</td>'
+                        html += f'<td style="padding:12px 15px;">'
+                        html += f'<div style="width: 100%; background-color: #e2e8f0; border-radius: 9999px; height: 16px; overflow: hidden; position: relative;">'
+                        html += f'<div style="width: {pct}%; background-color: {bar_color}; height: 100%; border-radius: 9999px; transition: width 0.5s ease;"></div>'
+                        if is_over:
+                             html += f'<div style="position: absolute; width: 100%; text-align: center; top: 0; font-size: 10px; color: white; line-height: 16px; font-weight: bold;">OVERACHIEVED</div>'
+                        html += f'</div>'
+                        html += '</td></tr>'
+                        
+                    html += '</tbody></table></div>'
+                    
+                    if not has_rows:
+                        st.info("None of the students in this category have assigned weekly targets in 'cub (1).xlsx'.")
+                    else:
+                        st.markdown(html, unsafe_allow_html=True)
+                
+                with tab1:
+                    render_tracking_table(third_years)
+                
+                with tab2:
+                    render_tracking_table(final_years)
+
         # ---- VIEW ALL LOGS ----
-        if prof_option == "View All Logs":
+        elif prof_option == "View All Logs":
             st.markdown("### 📋 All Logs")
             fresh_logs = load_logs()
             fresh_logs = fresh_logs.sort_values("date", ascending=False).reset_index(drop=True)
@@ -1625,4 +1947,161 @@ if page == "Professor":
                                 st.success(f"Generated report with {total_entries} total log entries across all problem statements.")
                                 filename = f"weekly_all_ps_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
                                 st.download_button("📥 Download PDF", pdf_obj.buffer, file_name=filename, mime="application/pdf")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+# ================= TIMETABLE PAGE =================
+if page == "TimeTable":
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("📅 Weekly Student TimeTable")
+    
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    current_day_name = datetime.now().strftime("%A")
+    default_idx = days.index(current_day_name) if current_day_name in days else 0
+    
+    selected_day = st.selectbox("Select Day", days, index=default_idx)
+    
+    schedule_data, time_slots = load_timetable(selected_day)
+    
+    if not schedule_data:
+        st.error(f"Could not load timetable for {selected_day}. Please ensure '{TIMETABLE_FILE}' is available and formatted correctly.")
+    else:
+        # Build HTML Table
+        html = '''
+        <div style="overflow-x:auto; border-radius:10px; border:1px solid #e2e8f0; margin-bottom:1rem; margin-top:1rem;">
+        <table style="width:100%; border-collapse:collapse; font-family:sans-serif; font-size:13px; color:#1e293b; background:#ffffff;">
+            <thead>
+                <tr style="background:#f1f5f9; color:#0f172a; text-align:center;">
+                    <th style="padding:10px; border-bottom:2px solid #cbd5e1; text-align:left; min-width: 150px; position: sticky; left: 0; background:#f1f5f9; z-index: 2;">Student Name</th>
+        '''
+        for slot in time_slots:
+            html += f'<th style="padding:10px; border-bottom:2px solid #cbd5e1; min-width: 100px;">{slot}</th>'
+        html += '</tr></thead><tbody>'
+        
+        for row_idx, student in enumerate(schedule_data):
+            is_sys_occ = "system" in student["name"].lower() and "occupied" in student["name"].lower()
+            bg_tr = "#f1f5f9" if is_sys_occ else ("#ffffff" if row_idx % 2 == 0 else "#f8fafc")
+            
+            html += f'<tr style="background:{bg_tr};">'
+            html += f'<td style="padding:10px; border-bottom:1px solid #e2e8f0; font-weight: 600; position: sticky; left: 0; background:{bg_tr}; z-index: 1;">{student["name"]}</td>'
+            
+            for slot in time_slots:
+                slot_val = student["slots"].get(slot, False)
+                if not slot_val:
+                    html += '<td style="padding:10px; border-bottom:1px solid #e2e8f0;"></td>'
+                elif is_sys_occ:
+                    html += f'<td style="padding:10px; border-bottom:1px solid #e2e8f0; text-align:center;">'
+                    html += f'<div style="background:#475569; color:#ffffff; padding:6px 8px; border-radius:6px; font-weight:600; font-size:11px;">{slot_val} Total</div>'
+                    html += '</td>'
+                else:
+                    html += f'<td style="padding:10px; border-bottom:1px solid #e2e8f0; text-align:center;">'
+                    html += f'<div style="background:#eff6ff; color:#1e40af; padding:6px 8px; border-radius:6px; font-weight:600; font-size:11px;">Scheduled</div>'
+                    html += '</td>'
+            html += '</tr>'
+            
+        html += '</tbody></table></div>'
+        st.markdown(html, unsafe_allow_html=True)
+            
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ================= LIVE ATTENDANCE PAGE =================
+if page == "Live Attendance":
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("🔴 Live Attendance Monitor")
+    
+    current_day_name = datetime.now().strftime("%A")
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    
+    # Handle Saturday overrides
+    if current_day_name == "Saturday":
+        st.info("Today is Saturday. If it is a working day, please select the day order below to track live attendance.")
+        override_day = st.selectbox("Select Day Order", days)
+        tracking_day = override_day
+    else:
+        tracking_day = current_day_name
+    
+    if tracking_day not in days:
+        st.info(f"Today is {current_day_name}. There is no live schedule actively tracking today.")
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        if current_day_name == "Saturday":
+            st.markdown(f"**Tracking real-time schedule for:** {tracking_day} (Saturday Override)")
+        else:
+            st.markdown(f"**Tracking real-time schedule for:** {tracking_day}")
+            
+        schedule_data, time_slots = load_timetable(tracking_day)
+        
+        if not schedule_data:
+            st.error(f"Could not load timetable for {current_day_name}.")
+        else:
+            import re
+            def norm_name(n):
+                return "".join(sorted(re.findall(r'[a-zA-Z]+', str(n).lower())))
+                
+            active_sessions = load_active_sessions()
+            active_names = [norm_name(n) for n in active_sessions["name"].tolist() if pd.notna(n)]
+            
+            now_time = datetime.now().time()
+            
+            # Build HTML Table
+            html = '''
+            <div style="overflow-x:auto; border-radius:10px; border:1px solid #e2e8f0; margin-bottom:1rem; margin-top:1rem;">
+            <table style="width:100%; border-collapse:collapse; font-family:sans-serif; font-size:13px; color:#1e293b; background:#ffffff;">
+                <thead>
+                    <tr style="background:#f1f5f9; color:#0f172a; text-align:center;">
+                        <th style="padding:10px; border-bottom:2px solid #cbd5e1; text-align:left; min-width: 150px; position: sticky; left: 0; background:#f1f5f9; z-index: 2;">Student Name</th>
+            '''
+            for slot in time_slots:
+                html += f'<th style="padding:10px; border-bottom:2px solid #cbd5e1; min-width: 100px;">{slot}</th>'
+            html += '</tr></thead><tbody>'
+            
+            for row_idx, student in enumerate(schedule_data):
+                is_sys_occ = "system" in student["name"].lower() and "occupied" in student["name"].lower()
+                bg_tr = "#f1f5f9" if is_sys_occ else ("#ffffff" if row_idx % 2 == 0 else "#f8fafc")
+                
+                html += f'<tr style="background:{bg_tr};">'
+                html += f'<td style="padding:10px; border-bottom:1px solid #e2e8f0; font-weight: 600; position: sticky; left: 0; background:{bg_tr}; z-index: 1;">{student["name"]}</td>'
+                
+                student_name_clean = norm_name(student["name"])
+                is_logged_in = student_name_clean in active_names
+                
+                for slot in time_slots:
+                    slot_val = student["slots"].get(slot, False)
+                    if not slot_val:
+                        html += '<td style="padding:10px; border-bottom:1px solid #e2e8f0;"></td>'
+                    elif is_sys_occ:
+                        html += f'<td style="padding:10px; border-bottom:1px solid #e2e8f0; text-align:center;">'
+                        html += f'<div style="background:#475569; color:#ffffff; padding:6px 8px; border-radius:6px; font-weight:600; font-size:11px;">{slot_val} Total</div>'
+                        html += '</td>'
+                    else:
+                        start_t, end_t = parse_time_slot(slot)
+                        is_current_slot = False
+                        
+                        if start_t and end_t:
+                            if start_t <= end_t:
+                                is_current_slot = (start_t <= now_time <= end_t)
+                            else:
+                                is_current_slot = (now_time >= start_t or now_time <= end_t)
+                                
+                        cell_bg = "#eff6ff" 
+                        cell_text = "Scheduled"
+                        cell_color = "#1e40af"
+                        
+                        if is_current_slot:
+                            if is_logged_in:
+                                cell_bg = "#22c55e" # Green
+                                cell_color = "#ffffff"
+                                cell_text = "Logged In"
+                            else:
+                                cell_bg = "#ef4444" # Red
+                                cell_color = "#ffffff"
+                                cell_text = "Missing"
+                                
+                        html += f'<td style="padding:10px; border-bottom:1px solid #e2e8f0; text-align:center;">'
+                        html += f'<div style="background:{cell_bg}; color:{cell_color}; padding:6px 8px; border-radius:6px; font-weight:600; font-size:11px;">{cell_text}</div>'
+                        html += '</td>'
+                html += '</tr>'
+                
+            html += '</tbody></table></div>'
+            st.markdown(html, unsafe_allow_html=True)
+                
         st.markdown('</div>', unsafe_allow_html=True)
