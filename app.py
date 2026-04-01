@@ -17,26 +17,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------------- Hardware Lock ----------------
-import winreg
-def verify_system_uuid():
-    ALLOWED_UUID = "9eea8689-b978-468a-8189-3906569ce820"
-    machine_guid = None
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Cryptography', 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
-            machine_guid, _ = winreg.QueryValueEx(key, 'MachineGuid')
-    except Exception:
-        try:
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Cryptography') as key:
-                machine_guid, _ = winreg.QueryValueEx(key, 'MachineGuid')
-        except Exception:
-            pass
-            
-    if str(machine_guid).lower() != ALLOWED_UUID.lower():
-        st.error("🚫 **Security Alert**: This application is strictly authorized to run exclusively on the designated Host PC.")
-        st.stop()
-
-verify_system_uuid()
 # ---------------- Custom CSS ----------------
 st.markdown("""
 <style>
