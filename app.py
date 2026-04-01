@@ -9,6 +9,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import TableStyle
+from zoneinfo import ZoneInfo
 
 # ---------------- Page Config ----------------
 st.set_page_config(
@@ -733,7 +734,7 @@ def light_table(df, column_config=None):
     def __init__(self, title="Weekly Log Report", report_type="General"):
         self.title = title
         self.report_type = report_type
-        self.report_time = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        self.report_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y %H:%M:%S")
         self.buffer = io.BytesIO()
         # FIX: Use landscape A4 for more column space
         self.doc = SimpleDocTemplate(
@@ -881,7 +882,7 @@ class PDFReport:
     def __init__(self, title="Weekly Log Report", report_type="General"):
         self.title = title
         self.report_type = report_type
-        self.report_time = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        self.report_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y %H:%M:%S")
         self.buffer = io.BytesIO()
         self.doc = SimpleDocTemplate(
             self.buffer,
@@ -1181,7 +1182,7 @@ if page == "Student":
         if student_session.empty:
             st.info("You haven't started your work for today.")
             if st.button("Log In (Start Work)", type="primary"):
-                now = datetime.now()
+                now = datetime.now(ZoneInfo("Asia/Kolkata"))
                 new_session = {
                     "reg_no": student["reg_no"],
                     "name": student["name"],
@@ -1195,6 +1196,7 @@ if page == "Student":
         else:
             session_data = student_session.iloc[0]
             start_dt = datetime.strptime(session_data["start_time"], "%Y-%m-%d %H:%M:%S")
+            start_dt = start_dt.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
             
             st.success(f"🟢 Active Work Session (Started at: {start_dt.strftime('%I:%M %p')})")
             
@@ -1204,7 +1206,7 @@ if page == "Student":
                 if not description.strip():
                     st.error("Please enter a Work Description before logging out.")
                 else:
-                    end_dt = datetime.now()
+                    end_dt = datetime.now(ZoneInfo("Asia/Kolkata"))
                     
                     if end_dt < start_dt:
                         end_dt = start_dt
@@ -1704,7 +1706,7 @@ if page == "Professor":
                                 "General Log Report",
                                 f"Period: {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}"
                             )
-                            filename = f"general_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                            filename = f"general_report_{datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y%m%d_%H%M%S')}.pdf"
                             st.success(f"Found {len(filtered)} log entries.")
                             st.download_button("📥 Download PDF", buf, file_name=filename, mime="application/pdf")
                         else:
@@ -1751,7 +1753,7 @@ if page == "Professor":
                                 "Problem Statement Report",
                                 f"Problem: {prob_name} | Period: {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}"
                             )
-                            filename = f"problem_{selected_prob_id}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                            filename = f"problem_{selected_prob_id}_report_{datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y%m%d_%H%M%S')}.pdf"
                             st.success(f"Found {len(filtered)} log entries.")
                             st.download_button("📥 Download PDF", buf, file_name=filename, mime="application/pdf")
                         else:
@@ -1785,7 +1787,7 @@ if page == "Professor":
                             "Current Week Report",
                             f"Week: {monday.strftime('%d-%m-%Y')} to {datetime.today().strftime('%d-%m-%Y')}"
                         )
-                        filename = f"weekly_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                        filename = f"weekly_report_{datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y%m%d_%H%M%S')}.pdf"
                         st.success(f"Found {len(filtered)} log entries for this week.")
                         st.download_button("📥 Download PDF", buf, file_name=filename, mime="application/pdf")
                     else:
@@ -1849,7 +1851,7 @@ if page == "Professor":
                                     f"Weekly Report — PS {selected_ps_id}: {ps_name}",
                                     f"Week: {monday.strftime('%d-%m-%Y')} to {datetime.today().strftime('%d-%m-%Y')}"
                                 )
-                                filename = f"weekly_ps{selected_ps_id}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                                filename = f"weekly_ps{selected_ps_id}_report_{datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y%m%d_%H%M%S')}.pdf"
                                 st.download_button("📥 Download PDF", buf, file_name=filename, mime="application/pdf")
                         else:
                             # Combined multi-section PDF for all PS
@@ -1925,7 +1927,7 @@ if page == "Professor":
                                 pdf_obj.buffer.seek(0)
                                 total_entries = sum(len(week_logs[week_logs["ps_no"] == ps_id]) for ps_id in PROBLEM_STATEMENTS)
                                 st.success(f"Generated report with {total_entries} total log entries across all problem statements.")
-                                filename = f"weekly_all_ps_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                                filename = f"weekly_all_ps_report_{datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y%m%d_%H%M%S')}.pdf"
                                 st.download_button("📥 Download PDF", pdf_obj.buffer, file_name=filename, mime="application/pdf")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1935,7 +1937,7 @@ if page == "TimeTable":
     st.subheader("📅 Weekly Student TimeTable")
     
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-    current_day_name = datetime.now().strftime("%A")
+    current_day_name = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%A")
     default_idx = days.index(current_day_name) if current_day_name in days else 0
     
     selected_day = st.selectbox("Select Day", days, index=default_idx)
@@ -1988,7 +1990,7 @@ if page == "Live Attendance":
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.subheader("🔴 Live Attendance Monitor")
     
-    current_day_name = datetime.now().strftime("%A")
+    current_day_name = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%A")
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     
     # Handle Saturday overrides
@@ -2020,7 +2022,7 @@ if page == "Live Attendance":
             active_sessions = load_active_sessions()
             active_names = [norm_name(n) for n in active_sessions["name"].tolist() if pd.notna(n)]
             
-            now_time = datetime.now().time()
+            now_time = datetime.now(ZoneInfo("Asia/Kolkata")).time()
             
             # Build HTML Table
             html = '''
