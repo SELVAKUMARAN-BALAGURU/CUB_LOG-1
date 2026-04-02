@@ -442,11 +442,19 @@ div[data-baseweb="calendar"] div[data-baseweb="select"] > div {
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- File Paths ----------------
-EXCEL_FILE = "Log.xlsx"
-TIMETABLE_FILE = "cub (1).xlsx"
-THIRD_YEAR_FILE = "3rd_year.xlsx"
-FINAL_YEAR_FILE = "final_year.xlsx"
+# ---------------- Google Sheets URLs ----------------
+# PLEASE REPLACE THESE WITH YOUR ACTUAL GOOGLE SHEETS URLs
+LOG_SHEET_URL = "https://docs.google.com/spreadsheets/d/17ygWdYJSKHKLrx5_8iMBuSkTaWuC_i1X47ljcKdRo98/edit?gid=1732522338#gid=1732522338"
+TIMETABLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1GZpFmP-fMhupeakDTSd7L8U6r6oFVY6l1MW0KqobIaw/edit?gid=912912585#gid=912912585"
+THIRD_YEAR_SHEET_URL = "https://docs.google.com/spreadsheets/d/1hD58PSTYLe_WTa8VpkUMLXY6AsODZdvlIdFRwZcT_c8/edit?gid=2075450599#gid=2075450599"
+FINAL_YEAR_SHEET_URL = "https://docs.google.com/spreadsheets/d/1p9JmHYPTBMJamtzXYLy_zOFayMbW15Wcymp4sORsKmI/edit?gid=1506650140#gid=1506650140"
+
+from streamlit_gsheets import GSheetsConnection
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception as e:
+    st.error("Failed to connect to Google Sheets. Please ensure .streamlit/secrets.toml is configured correctly.")
+    conn = None
 
 # Problem Statements Dictionary
 PROBLEM_STATEMENTS = {
@@ -459,67 +467,94 @@ PROBLEM_STATEMENTS = {
 }
 
 
+@st.cache_data(ttl=600)
 def load_students():
-    return pd.read_excel(EXCEL_FILE, sheet_name="Sheet1")
+    if conn is None: return pd.DataFrame()
+    return conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Sheet1").dropna(how="all")
 
+@st.cache_data(ttl=600)
 def load_logs():
-    df = pd.read_excel(EXCEL_FILE, sheet_name="Sheet2")
-    if 'date' in df.columns:
-        # Excel stores dates as datetime64 — convert cleanly and normalize to midnight
-        df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.normalize()
-    return df
+    if conn is None: return pd.DataFrame(columns=["reg_no","name","faculty","date","start_time","end_time","description"])
+    try:
+        df = conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Sheet2").dropna(how="all")
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.normalize()
+        if 'reg_no' in df.columns:
+            df['reg_no'] = df['reg_no'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["reg_no","name","faculty","date","start_time","end_time","description"])
 
 def save_log(new_data):
+    if conn is None: return
     df_logs = load_logs()
     new_entry = pd.DataFrame([new_data])
     new_entry['date'] = pd.to_datetime(new_entry['date'], errors='coerce').dt.normalize()
+    new_entry['date'] = new_entry['date'].dt.strftime('%Y-%m-%d')
+    if 'date' in df_logs.columns:
+        df_logs['date'] = pd.to_datetime(df_logs['date'], errors='coerce').dt.strftime('%Y-%m-%d')
     df_logs = pd.concat([df_logs, new_entry], ignore_index=True)
+    conn.update(spreadsheet=LOG_SHEET_URL, worksheet="Sheet2", data=df_logs)
+    st.cache_data.clear()
 
-    with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-        df_logs.to_excel(writer, sheet_name="Sheet2", index=False)
-
+@st.cache_data(ttl=600)
 def load_professors():
-    return pd.read_excel(EXCEL_FILE, sheet_name="Sheet3")
+    if conn is None: return pd.DataFrame()
+    try:
+        return conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Sheet3").dropna(how="all")
+    except Exception:
+        return pd.DataFrame()
 
 def save_professor(new_prof):
+    if conn is None: return
     df_prof = load_professors()
     df_prof = pd.concat([df_prof, pd.DataFrame([new_prof])], ignore_index=True)
+    conn.update(spreadsheet=LOG_SHEET_URL, worksheet="Sheet3", data=df_prof)
+    st.cache_data.clear()
 
-    with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-        df_prof.to_excel(writer, sheet_name="Sheet3", index=False)
-
+@st.cache_data(ttl=600)
 def load_active_sessions():
     """Load active (logged-in) sessions."""
+    if conn is None: return pd.DataFrame(columns=["reg_no", "name", "faculty", "problem_no", "start_time"])
     try:
-        df = pd.read_excel(EXCEL_FILE, sheet_name="Active_Sessions")
-        df["reg_no"] = df["reg_no"].astype(str).str.strip()
+        df = conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Active_Sessions").dropna(how="all")
+        if not df.empty and "reg_no" in df.columns:
+            df["reg_no"] = df["reg_no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
         return df
     except Exception:
         return pd.DataFrame(columns=["reg_no", "name", "faculty", "problem_no", "start_time"])
 
 def save_active_session(new_session):
+    if conn is None: return
     df = load_active_sessions()
-    df = df[df["reg_no"] != str(new_session["reg_no"]).strip()]
+    if not df.empty and "reg_no" in df.columns:
+        df = df[df["reg_no"] != str(new_session["reg_no"]).strip()]
     df = pd.concat([df, pd.DataFrame([new_session])], ignore_index=True)
-    with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-        df.to_excel(writer, sheet_name="Active_Sessions", index=False)
+    conn.update(spreadsheet=LOG_SHEET_URL, worksheet="Active_Sessions", data=df)
+    st.cache_data.clear()
 
 def remove_active_session(reg_no):
+    if conn is None: return
     df = load_active_sessions()
-    df = df[df["reg_no"] != str(reg_no).strip()]
-    with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-        df.to_excel(writer, sheet_name="Active_Sessions", index=False)
+    if not df.empty and "reg_no" in df.columns:
+        df = df[df["reg_no"] != str(reg_no).strip()]
+        conn.update(spreadsheet=LOG_SHEET_URL, worksheet="Active_Sessions", data=df)
+        st.cache_data.clear()
 
+@st.cache_data(ttl=600)
 def load_student_hours():
     """Load total accumulated hours per student."""
+    if conn is None: return pd.DataFrame(columns=["reg_no", "name", "total_hours"])
     try:
-        df = pd.read_excel(EXCEL_FILE, sheet_name="Student_Hours")
-        df["reg_no"] = df["reg_no"].astype(str).str.strip()
+        df = conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Student_Hours").dropna(how="all")
+        if not df.empty and "reg_no" in df.columns:
+            df["reg_no"] = df["reg_no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
         return df
     except Exception:
         return pd.DataFrame(columns=["reg_no", "name", "total_hours"])
 
 def update_student_hours(reg_no, name, hours_worked):
+    if conn is None: return
     df = load_student_hours()
     reg_no_str = str(reg_no).strip()
     
@@ -530,9 +565,8 @@ def update_student_hours(reg_no, name, hours_worked):
         idx = df[df["reg_no"] == reg_no_str].index[0]
         df.loc[idx, "total_hours"] += hours_worked
         
-        
-    with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-        df.to_excel(writer, sheet_name="Student_Hours", index=False)
+    conn.update(spreadsheet=LOG_SHEET_URL, worksheet="Student_Hours", data=df)
+    st.cache_data.clear()
 
 def parse_time_slot(time_str):
     """Parse '8:45 to 9:45' into two datetime.time objects for today."""
@@ -564,10 +598,12 @@ def parse_time_slot(time_str):
     except Exception:
         return None, None
 
+@st.cache_data(ttl=600)
 def load_timetable(day_name):
     """Load the schedule from cub (1).xlsx for a specific day."""
+    if conn is None: return [], []
     try:
-        df = pd.read_excel(TIMETABLE_FILE, sheet_name=day_name)
+        df = conn.read(spreadsheet=TIMETABLE_SHEET_URL, worksheet=day_name).dropna(how="all").dropna(axis=1, how="all")
         time_headers = df.iloc[0].values
         student_col = df.columns[1] 
         
@@ -580,16 +616,17 @@ def load_timetable(day_name):
             is_sys_occ = "system" in str(name).lower() and "occupied" in str(name).lower()
             
             for col_idx in range(2, len(df.columns)):
-                time_str = str(time_headers[col_idx]).strip()
-                if 'to' not in time_str.lower(): continue
-                val = df.iloc[idx, col_idx]
-                
-                if pd.notna(val):
-                    if is_sys_occ and float(val) > 0:
-                        row_data["slots"][time_str] = int(val)
-                    elif not is_sys_occ and val == 1:
-                        row_data["slots"][time_str] = True
-                
+                if col_idx < len(time_headers):
+                    time_str = str(time_headers[col_idx]).strip()
+                    if 'to' not in time_str.lower(): continue
+                    val = df.iloc[idx, col_idx]
+                    
+                    if pd.notna(val):
+                        if is_sys_occ and float(val) > 0:
+                            row_data["slots"][time_str] = int(val)
+                        elif not is_sys_occ and val == 1:
+                            row_data["slots"][time_str] = True
+                    
             schedule.append(row_data)
         
         slots_ordered = []
@@ -602,10 +639,12 @@ def load_timetable(day_name):
     except Exception as e:
         return [], []
 
+@st.cache_data(ttl=600)
 def load_target_hours():
     """Load target weekly hours for each student from Sheet1."""
+    if conn is None: return {}
     try:
-        df = pd.read_excel(TIMETABLE_FILE, sheet_name="Sheet1")
+        df = conn.read(spreadsheet=TIMETABLE_SHEET_URL, worksheet="Sheet1").dropna(how="all")
         name_col = df.columns[1] 
         target_col = "Total Hrs"
         if target_col not in df.columns:
@@ -627,29 +666,33 @@ def load_target_hours():
         return {}
 
 
+@st.cache_data(ttl=600)
 def load_third_year_students():
     """Load 3rd year students from separate Excel file"""
+    if conn is None: return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
     try:
-        df = pd.read_excel(THIRD_YEAR_FILE)
-        df.columns = df.columns.str.strip().str.lower()
-        df["reg_no"] = df["reg no"].astype(str).str.strip()
-        df["name"] = df["student name"]
-        df["guide"] = df["guide name"]
-        df["problem_no"] = df["problem statement no."].astype(str).str.strip()
+        df = conn.read(spreadsheet=THIRD_YEAR_SHEET_URL, worksheet=0).dropna(how="all")
+        df.columns = df.columns.astype(str).str.strip().str.lower()
+        if "reg no" in df.columns: df["reg_no"] = df["reg no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+        if "student name" in df.columns: df["name"] = df["student name"]
+        if "guide name" in df.columns: df["guide"] = df["guide name"]
+        if "problem statement no." in df.columns: df["problem_no"] = df["problem statement no."].astype(str).str.strip()
         return df
     except Exception as e:
         st.error(f"Error loading 3rd year file: {e}")
         return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
 
+@st.cache_data(ttl=600)
 def load_final_year_students():
     """Load final year students from separate Excel file"""
+    if conn is None: return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
     try:
-        df = pd.read_excel(FINAL_YEAR_FILE)
-        df.columns = df.columns.str.strip().str.lower()
-        df["reg_no"] = df["reg no"].astype(str).str.strip()
-        df["name"] = df["student name"]
-        df["guide"] = df["guide name"]
-        df["problem_no"] = df["problem statement no."].astype(str).str.strip()
+        df = conn.read(spreadsheet=FINAL_YEAR_SHEET_URL, worksheet=0).dropna(how="all")
+        df.columns = df.columns.astype(str).str.strip().str.lower()
+        if "reg no" in df.columns: df["reg_no"] = df["reg no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+        if "student name" in df.columns: df["name"] = df["student name"]
+        if "guide name" in df.columns: df["guide"] = df["guide name"]
+        if "problem statement no." in df.columns: df["problem_no"] = df["problem statement no."].astype(str).str.strip()
         return df
     except Exception as e:
         st.error(f"Error loading final year file: {e}")
@@ -670,7 +713,10 @@ def get_monday_of_current_week():
 
 def get_problem_statement_name(prob_no):
     """Get problem statement name from ID"""
-    return PROBLEM_STATEMENTS.get(str(prob_no).strip(), "Unknown")
+    s = str(prob_no).strip()
+    if s.endswith(".0"): 
+        s = s[:-2]
+    return PROBLEM_STATEMENTS.get(s, "Unknown")
 
 def prepare_display_df(df):
     """Prepare a dataframe for display on the web - format dates nicely."""
@@ -1289,8 +1335,8 @@ if page == "Professor":
 
             if st.button("Login"):
                 df_prof = load_professors()
-                df_prof["faculty_id"] = df_prof["faculty_id"].astype(str).str.strip()
-                df_prof["password"] = df_prof["password"].astype(str)
+                df_prof["faculty_id"] = df_prof["faculty_id"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                df_prof["password"] = df_prof["password"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
                 user = df_prof[
                     (df_prof["faculty_id"] == faculty_id.strip()) &
                     (df_prof["password"] == password)
