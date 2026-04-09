@@ -467,7 +467,7 @@ PROBLEM_STATEMENTS = {
 }
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_students():
     if conn is None: return pd.DataFrame()
     return conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Sheet1").dropna(how="all")
@@ -495,9 +495,9 @@ def save_log(new_data):
         df_logs['date'] = pd.to_datetime(df_logs['date'], errors='coerce').dt.strftime('%Y-%m-%d')
     df_logs = pd.concat([df_logs, new_entry], ignore_index=True)
     conn.update(spreadsheet=LOG_SHEET_URL, worksheet="Sheet2", data=df_logs)
-    st.cache_data.clear()
+    load_logs.clear()
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_professors():
     if conn is None: return pd.DataFrame()
     try:
@@ -510,7 +510,7 @@ def save_professor(new_prof):
     df_prof = load_professors()
     df_prof = pd.concat([df_prof, pd.DataFrame([new_prof])], ignore_index=True)
     conn.update(spreadsheet=LOG_SHEET_URL, worksheet="Sheet3", data=df_prof)
-    st.cache_data.clear()
+    load_professors.clear()
 
 @st.cache_data(ttl=600)
 def load_active_sessions():
@@ -531,7 +531,7 @@ def save_active_session(new_session):
         df = df[df["reg_no"] != str(new_session["reg_no"]).strip()]
     df = pd.concat([df, pd.DataFrame([new_session])], ignore_index=True)
     conn.update(spreadsheet=LOG_SHEET_URL, worksheet="Active_Sessions", data=df)
-    st.cache_data.clear()
+    load_active_sessions.clear()
 
 def remove_active_session(reg_no):
     if conn is None: return
@@ -539,7 +539,7 @@ def remove_active_session(reg_no):
     if not df.empty and "reg_no" in df.columns:
         df = df[df["reg_no"] != str(reg_no).strip()]
         conn.update(spreadsheet=LOG_SHEET_URL, worksheet="Active_Sessions", data=df)
-        st.cache_data.clear()
+        load_active_sessions.clear()
 
 @st.cache_data(ttl=600)
 def load_student_hours():
@@ -566,7 +566,7 @@ def update_student_hours(reg_no, name, hours_worked):
         df.loc[idx, "total_hours"] += hours_worked
         
     conn.update(spreadsheet=LOG_SHEET_URL, worksheet="Student_Hours", data=df)
-    st.cache_data.clear()
+    load_student_hours.clear()
 
 def parse_time_slot(time_str):
     """Parse '8:45 to 9:45' into two datetime.time objects for today."""
@@ -598,7 +598,7 @@ def parse_time_slot(time_str):
     except Exception:
         return None, None
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_timetable(day_name):
     """Load the schedule from cub (1).xlsx for a specific day."""
     if conn is None: return [], []
@@ -639,7 +639,7 @@ def load_timetable(day_name):
     except Exception as e:
         return [], []
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_target_hours():
     """Load target weekly hours for each student from Sheet1."""
     if conn is None: return {}
@@ -666,7 +666,7 @@ def load_target_hours():
         return {}
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_third_year_students():
     """Load 3rd year students from separate Excel file"""
     if conn is None: return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
@@ -682,7 +682,7 @@ def load_third_year_students():
         st.error(f"Error loading 3rd year file: {e}")
         return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_final_year_students():
     """Load final year students from separate Excel file"""
     if conn is None: return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
