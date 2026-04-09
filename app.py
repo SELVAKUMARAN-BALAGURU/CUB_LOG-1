@@ -1197,8 +1197,9 @@ if page == "Student":
     
     all_students_df = st.session_state.all_students_df
 
-    # Load logs locally for this page
+    # Load logs and students locally for this page
     try:
+        students_df = load_students()
         logs_df = load_logs()
     except Exception as e:
         st.error(f"⚠️ **Connection Busy**: {e}")
@@ -1423,6 +1424,7 @@ if page == "Professor":
 
         # Load data for Professor tools
         try:
+            students_df = load_students()
             logs_df = load_logs()
             all_students_df = get_all_students()
         except Exception as e:
@@ -2063,7 +2065,7 @@ if page == "TimeTable":
     schedule_data, time_slots = load_timetable(selected_day)
     
     if not schedule_data:
-        st.error(f"Could not load timetable for {selected_day}. Please ensure '{TIMETABLE_FILE}' is available and formatted correctly.")
+        st.error(f"Could not load timetable for {selected_day}. Please ensure the Timetable sheet is reachable.")
     else:
         # Build HTML Table
         html = '''
