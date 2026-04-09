@@ -670,33 +670,25 @@ def load_target_hours():
 def load_third_year_students():
     """Load 3rd year students from separate Excel file"""
     if conn is None: return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
-    try:
-        df = conn.read(spreadsheet=THIRD_YEAR_SHEET_URL, worksheet=0).dropna(how="all")
-        df.columns = df.columns.astype(str).str.strip().str.lower()
-        if "reg no" in df.columns: df["reg_no"] = df["reg no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-        if "student name" in df.columns: df["name"] = df["student name"]
-        if "guide name" in df.columns: df["guide"] = df["guide name"]
-        if "problem statement no." in df.columns: df["problem_no"] = df["problem statement no."].astype(str).str.strip()
-        return df
-    except Exception as e:
-        st.error(f"Error loading 3rd year file: {e}")
-        return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
+    df = conn.read(spreadsheet=THIRD_YEAR_SHEET_URL, worksheet=0).dropna(how="all")
+    df.columns = df.columns.astype(str).str.strip().str.lower()
+    if "reg no" in df.columns: df["reg_no"] = df["reg no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+    if "student name" in df.columns: df["name"] = df["student name"]
+    if "guide name" in df.columns: df["guide"] = df["guide name"]
+    if "problem statement no." in df.columns: df["problem_no"] = df["problem statement no."].astype(str).str.strip()
+    return df
 
 @st.cache_data(ttl=3600)
 def load_final_year_students():
     """Load final year students from separate Excel file"""
     if conn is None: return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
-    try:
-        df = conn.read(spreadsheet=FINAL_YEAR_SHEET_URL, worksheet=0).dropna(how="all")
-        df.columns = df.columns.astype(str).str.strip().str.lower()
-        if "reg no" in df.columns: df["reg_no"] = df["reg no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-        if "student name" in df.columns: df["name"] = df["student name"]
-        if "guide name" in df.columns: df["guide"] = df["guide name"]
-        if "problem statement no." in df.columns: df["problem_no"] = df["problem statement no."].astype(str).str.strip()
-        return df
-    except Exception as e:
-        st.error(f"Error loading final year file: {e}")
-        return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
+    df = conn.read(spreadsheet=FINAL_YEAR_SHEET_URL, worksheet=0).dropna(how="all")
+    df.columns = df.columns.astype(str).str.strip().str.lower()
+    if "reg no" in df.columns: df["reg_no"] = df["reg no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+    if "student name" in df.columns: df["name"] = df["student name"]
+    if "guide name" in df.columns: df["guide"] = df["guide name"]
+    if "problem statement no." in df.columns: df["problem_no"] = df["problem statement no."].astype(str).str.strip()
+    return df
 
 def get_all_students():
     """Combine all students from both year files"""
@@ -1175,7 +1167,16 @@ if page == "Student":
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("🎓 Student Login")
 
-        all_students_df = get_all_students()
+        try:
+            all_students_df = get_all_students()
+        except Exception as e:
+            st.error(f"⚠️ **Database Temporary Unavailable**: {e}")
+            st.info("The link to Google Sheets might be slow or hit a limit. Click below to try again.")
+            if st.button("🔄 Reload Student Database"):
+                st.cache_data.clear()
+                st.rerun()
+            st.stop()
+
         reg_no = st.text_input("Enter Register Number")
 
         if st.button("Login"):
@@ -1189,7 +1190,10 @@ if page == "Student":
                 else:
                     st.error("Invalid Register Number. Please check your Reg No or contact your guide.")
             else:
-                st.error("Student database not available. Please check if 3rd_year.xlsx and final_year.xlsx exist.")
+                st.error("Database is empty. Please contact your guide.")
+                if st.button("Force Refresh Database"):
+                    st.cache_data.clear()
+                    st.rerun()
 
         st.markdown('</div>', unsafe_allow_html=True)
 
