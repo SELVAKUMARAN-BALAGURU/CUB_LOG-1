@@ -1160,6 +1160,14 @@ page = st.sidebar.radio("Go To", ["Student", "Professor", "TimeTable", "Live Att
 students_df = load_students()
 logs_df = load_logs()
 
+# --- SIDEBAR SYSTEM TOOLS ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🛠️ System Tools")
+if st.sidebar.button("Clear Cache & Refresh", use_container_width=True):
+    st.cache_data.clear()
+    st.success("Cache Cleared!")
+    st.rerun()
+
 # ================= STUDENT PAGE =================
 if page == "Student":
 
@@ -1177,23 +1185,24 @@ if page == "Student":
                 st.rerun()
             st.stop()
 
+        if all_students_df.empty:
+            st.warning("⚠️ **Student Database seems empty.**")
+            if st.button("🔄 Force Refresh Database", key="empty_db_refresh"):
+                st.cache_data.clear()
+                st.rerun()
+            st.stop()
+
         reg_no = st.text_input("Enter Register Number")
 
         if st.button("Login"):
-            if not all_students_df.empty:
-                valid_student = all_students_df[all_students_df["reg_no"] == reg_no.strip()]
-                if not valid_student.empty:
-                    st.session_state.student_logged_in = True
-                    st.session_state.student_reg_no = reg_no.strip()
-                    st.success("Login Successful!")
-                    st.rerun()
-                else:
-                    st.error("Invalid Register Number. Please check your Reg No or contact your guide.")
+            valid_student = all_students_df[all_students_df["reg_no"] == reg_no.strip()]
+            if not valid_student.empty:
+                st.session_state.student_logged_in = True
+                st.session_state.student_reg_no = reg_no.strip()
+                st.success("Login Successful!")
+                st.rerun()
             else:
-                st.error("Database is empty. Please contact your guide.")
-                if st.button("Force Refresh Database"):
-                    st.cache_data.clear()
-                    st.rerun()
+                st.error("Invalid Register Number. Please check your Reg No or contact your guide.")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
