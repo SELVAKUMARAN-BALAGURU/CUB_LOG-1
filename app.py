@@ -1236,7 +1236,9 @@ if page == "Student":
             if not valid_student.empty:
                 st.session_state.student_logged_in = True
                 st.session_state.student_reg_no = reg_no.strip()
-                st.success("Login Successful!")
+                st.success("Login Successful! Syncing with database...")
+                time.sleep(3)
+                st.cache_data.clear()
                 st.rerun()
             else:
                 st.error("Invalid Register Number. Please check your Reg No or contact your guide.")
@@ -1287,7 +1289,9 @@ if page == "Student":
                     "start_time": now.strftime("%Y-%m-%d %H:%M:%S")
                 }
                 save_active_session(new_session)
-                st.success(f"Log In saved! Work session started at {now.strftime('%I:%M %p')}.")
+                st.success(f"Log In saved! Work session started at {now.strftime('%I:%M %p')}. Syncing with database...")
+                time.sleep(3)
+                st.cache_data.clear()
                 st.rerun()
         else:
             session_data = student_session.iloc[0]
@@ -1323,7 +1327,9 @@ if page == "Student":
                     update_student_hours(student["reg_no"], student["name"], hours_worked)
                     remove_active_session(student["reg_no"])
                     
-                    st.success(f"✅ Log Out Successful! Duration: {hours_worked:.2f} hours.")
+                    st.success(f"✅ Log Out Successful! Duration: {hours_worked:.2f} hours. Syncing with database...")
+                    time.sleep(3)
+                    st.cache_data.clear()
                     st.rerun()
 
         # Show student's own logs
@@ -1396,7 +1402,9 @@ if page == "Professor":
                     st.session_state.prof_logged_in = True
                     st.session_state.prof_name = user.iloc[0]["name"]
                     st.session_state.prof_faculty_id = faculty_id.strip()
-                    st.success("Login Successful!")
+                    st.success("Login Successful! Syncing with database...")
+                    time.sleep(3)
+                    st.cache_data.clear()
                     st.rerun()
                 else:
                     st.error("Invalid Faculty ID or Password")
