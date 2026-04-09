@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import io
+import time
 import streamlit.components.v1 as components
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, PageBreak
 from reportlab.lib import colors
@@ -456,6 +457,23 @@ except Exception as e:
     st.error("Failed to connect to Google Sheets. Please ensure .streamlit/secrets.toml is configured correctly.")
     conn = None
 
+def safe_read(spreadsheet, worksheet=0, max_retries=3, delay=2):
+    """Wrapper for conn.read with automatic retry logic for API limits."""
+    if conn is None: return pd.DataFrame()
+    for attempt in range(max_retries):
+        try:
+            return conn.read(spreadsheet=spreadsheet, worksheet=worksheet).dropna(how="all")
+        except Exception as e:
+            error_str = str(e).lower()
+            # If it's a rate limit error (429), wait and retry
+            if "exhausted" in error_str or "429" in error_str or "limit" in error_str:
+                if attempt < max_retries - 1:
+                    time.sleep(delay * (attempt + 1))  # Exponential backoff
+                    continue
+            # For other errors or final attempt, re-raise to be caught by UI
+            raise e
+    return pd.DataFrame()
+
 # Problem Statements Dictionary
 PROBLEM_STATEMENTS = {
     "1": "EWS",
@@ -469,21 +487,20 @@ PROBLEM_STATEMENTS = {
 
 @st.cache_data(ttl=3600)
 def load_students():
-    if conn is None: return pd.DataFrame()
-    return conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Sheet1").dropna(how="all")
+    """Load main student list from Sheet1."""
+    return safe_read(spreadsheet=LOG_SHEET_URL, worksheet="Sheet1")
 
 @st.cache_data(ttl=600)
 def load_logs():
-    if conn is None: return pd.DataFrame(columns=["reg_no","name","faculty","date","start_time","end_time","description"])
-    try:
-        df = conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Sheet2").dropna(how="all")
-        if 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.normalize()
-        if 'reg_no' in df.columns:
-            df['reg_no'] = df['reg_no'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["reg_no","name","faculty","date","start_time","end_time","description"])
+    """Load all student logs from Sheet2."""
+    df = safe_read(spreadsheet=LOG_SHEET_URL, worksheet="Sheet2")
+    if df.empty: return pd.DataFrame(columns=["reg_no","name","faculty","date","start_time","end_time","description"])
+    
+    if 'date' in df.columns:
+        df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.normalize()
+    if 'reg_no' in df.columns:
+        df['reg_no'] = df['reg_no'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+    return df
 
 def save_log(new_data):
     if conn is None: return
@@ -499,11 +516,8 @@ def save_log(new_data):
 
 @st.cache_data(ttl=3600)
 def load_professors():
-    if conn is None: return pd.DataFrame()
-    try:
-        return conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Sheet3").dropna(how="all")
-    except Exception:
-        return pd.DataFrame()
+    """Load the list of professors/faculty."""
+    return safe_read(spreadsheet=LOG_SHEET_URL, worksheet="Sheet3")
 
 def save_professor(new_prof):
     if conn is None: return
@@ -515,14 +529,12 @@ def save_professor(new_prof):
 @st.cache_data(ttl=600)
 def load_active_sessions():
     """Load active (logged-in) sessions."""
-    if conn is None: return pd.DataFrame(columns=["reg_no", "name", "faculty", "problem_no", "start_time"])
-    try:
-        df = conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Active_Sessions").dropna(how="all")
-        if not df.empty and "reg_no" in df.columns:
-            df["reg_no"] = df["reg_no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["reg_no", "name", "faculty", "problem_no", "start_time"])
+    df = safe_read(spreadsheet=LOG_SHEET_URL, worksheet="Active_Sessions")
+    if df.empty: return pd.DataFrame(columns=["reg_no", "name", "faculty", "problem_no", "start_time"])
+    
+    if "reg_no" in df.columns:
+        df["reg_no"] = df["reg_no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+    return df
 
 def save_active_session(new_session):
     if conn is None: return
@@ -544,14 +556,12 @@ def remove_active_session(reg_no):
 @st.cache_data(ttl=600)
 def load_student_hours():
     """Load total accumulated hours per student."""
-    if conn is None: return pd.DataFrame(columns=["reg_no", "name", "total_hours"])
-    try:
-        df = conn.read(spreadsheet=LOG_SHEET_URL, worksheet="Student_Hours").dropna(how="all")
-        if not df.empty and "reg_no" in df.columns:
-            df["reg_no"] = df["reg_no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["reg_no", "name", "total_hours"])
+    df = safe_read(spreadsheet=LOG_SHEET_URL, worksheet="Student_Hours")
+    if df.empty: return pd.DataFrame(columns=["reg_no", "name", "total_hours"])
+    
+    if "reg_no" in df.columns:
+        df["reg_no"] = df["reg_no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+    return df
 
 def update_student_hours(reg_no, name, hours_worked):
     if conn is None: return
@@ -601,9 +611,11 @@ def parse_time_slot(time_str):
 @st.cache_data(ttl=3600)
 def load_timetable(day_name):
     """Load the schedule from cub (1).xlsx for a specific day."""
-    if conn is None: return [], []
+    df = safe_read(spreadsheet=TIMETABLE_SHEET_URL, worksheet=day_name)
+    if df.empty: return [], []
+    
     try:
-        df = conn.read(spreadsheet=TIMETABLE_SHEET_URL, worksheet=day_name).dropna(how="all").dropna(axis=1, how="all")
+        df = df.dropna(axis=1, how="all")
         time_headers = df.iloc[0].values
         student_col = df.columns[1] 
         
@@ -642,9 +654,10 @@ def load_timetable(day_name):
 @st.cache_data(ttl=3600)
 def load_target_hours():
     """Load target weekly hours for each student from Sheet1."""
-    if conn is None: return {}
+    df = safe_read(spreadsheet=TIMETABLE_SHEET_URL, worksheet="Sheet1")
+    if df.empty: return {}
+    
     try:
-        df = conn.read(spreadsheet=TIMETABLE_SHEET_URL, worksheet="Sheet1").dropna(how="all")
         name_col = df.columns[1] 
         target_col = "Total Hrs"
         if target_col not in df.columns:
@@ -669,8 +682,9 @@ def load_target_hours():
 @st.cache_data(ttl=3600)
 def load_third_year_students():
     """Load 3rd year students from separate Excel file"""
-    if conn is None: return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
-    df = conn.read(spreadsheet=THIRD_YEAR_SHEET_URL, worksheet=0).dropna(how="all")
+    df = safe_read(spreadsheet=THIRD_YEAR_SHEET_URL, worksheet=0)
+    if df.empty: return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
+    
     df.columns = df.columns.astype(str).str.strip().str.lower()
     if "reg no" in df.columns: df["reg_no"] = df["reg no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
     if "student name" in df.columns: df["name"] = df["student name"]
@@ -681,8 +695,9 @@ def load_third_year_students():
 @st.cache_data(ttl=3600)
 def load_final_year_students():
     """Load final year students from separate Excel file"""
-    if conn is None: return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
-    df = conn.read(spreadsheet=FINAL_YEAR_SHEET_URL, worksheet=0).dropna(how="all")
+    df = safe_read(spreadsheet=FINAL_YEAR_SHEET_URL, worksheet=0)
+    if df.empty: return pd.DataFrame(columns=["reg_no", "name", "guide", "problem_no"])
+    
     df.columns = df.columns.astype(str).str.strip().str.lower()
     if "reg no" in df.columns: df["reg_no"] = df["reg no"].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
     if "student name" in df.columns: df["name"] = df["student name"]
@@ -1165,17 +1180,32 @@ if st.sidebar.button("Clear Cache & Refresh", use_container_width=True):
     st.success("Cache Cleared!")
     st.rerun()
 
-# --- SAFE DATA LOADING ---
-try:
-    students_df = load_students()
-    logs_df = load_logs()
-except Exception as e:
-    st.error(f"⚠️ **Google Sheets Connection issue**: {e}")
-    st.info("Google might be busy. Please wait 60 seconds and click 'Clear Cache & Refresh' in the sidebar.")
-    st.stop()
 
 # ================= STUDENT PAGE =================
 if page == "Student":
+    # Session-level caching for student list
+    if "all_students_df" not in st.session_state:
+        try:
+            with st.spinner("Loading database..."):
+                st.session_state.all_students_df = get_all_students()
+        except Exception as e:
+            st.error(f"⚠️ **Database Unavailable**: {e}")
+            if st.button("🔄 Retry Connection"):
+                st.cache_data.clear()
+                st.rerun()
+            st.stop()
+    
+    all_students_df = st.session_state.all_students_df
+
+    # Load logs locally for this page
+    try:
+        logs_df = load_logs()
+    except Exception as e:
+        st.error(f"⚠️ **Connection Busy**: {e}")
+        if st.button("🔄 Refresh Logs"):
+            st.cache_data.clear()
+            st.rerun()
+        st.stop()
 
     if not st.session_state.student_logged_in:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -1390,6 +1420,17 @@ if page == "Professor":
         )
 
         st.subheader(" Professor Dashboard")
+
+        # Load data for Professor tools
+        try:
+            logs_df = load_logs()
+            all_students_df = get_all_students()
+        except Exception as e:
+            st.error(f"⚠️ **Connection Issue**: {e}")
+            if st.button("🔄 Refresh Data"):
+                st.cache_data.clear()
+                st.rerun()
+            st.stop()
 
         # ---- LIVE DASHBOARD ----
         if prof_option == "Live Dashboard":
@@ -2001,6 +2042,18 @@ if page == "TimeTable":
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.subheader("📅 Weekly Student TimeTable")
     
+    # Load required data for this page
+    try:
+        all_students_df = get_all_students()
+        target_hours = load_target_hours()
+        student_hours_df = load_student_hours()
+    except Exception as e:
+        st.error(f"⚠️ **Connection Busy**: {e}")
+        if st.button("🔄 Retry Connection"):
+            st.cache_data.clear()
+            st.rerun()
+        st.stop()
+    
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     current_day_name = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%A")
     default_idx = days.index(current_day_name) if current_day_name in days else 0
@@ -2054,6 +2107,16 @@ if page == "TimeTable":
 if page == "Live Attendance":
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.subheader("🔴 Live Attendance Monitor")
+    
+    # Load required data for this page
+    try:
+        active_sessions = load_active_sessions()
+    except Exception as e:
+        st.error(f"⚠️ **Connection Busy**: {e}")
+        if st.button("🔄 Retry Connection"):
+            st.cache_data.clear()
+            st.rerun()
+        st.stop()
     
     current_day_name = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%A")
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
