@@ -465,8 +465,10 @@ def safe_read(spreadsheet, worksheet=0, max_retries=3, delay=2):
             return conn.read(spreadsheet=spreadsheet, worksheet=worksheet).dropna(how="all")
         except Exception as e:
             error_str = str(e).lower()
-            # If it's a rate limit error (429), wait and retry
-            if "exhausted" in error_str or "429" in error_str or "limit" in error_str:
+            # If it's a rate limit error (429) or transient Google error (500, 503)
+            is_transient = any(x in error_str for x in ["429", "500", "503", "exhausted", "limit", "internal"])
+            
+            if is_transient:
                 if attempt < max_retries - 1:
                     time.sleep(delay * (attempt + 1))  # Exponential backoff
                     continue
@@ -1257,7 +1259,14 @@ if page == "Student":
 
         st.subheader("📝 Student Log Entry")
 
-        all_students_df = get_all_students()
+        try:
+            all_students_df = get_all_students()
+        except Exception as e:
+            st.error(f"⚠️ **Connection Issue**: {e}")
+            if st.button("🔄 Reload Page"):
+                st.rerun()
+            st.stop()
+
         student_matches = all_students_df[all_students_df["reg_no"] == st.session_state.student_reg_no]
         if student_matches.empty:
             st.error("Student record not found. Please re-login.")
