@@ -1157,9 +1157,6 @@ components.html("""
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go To", ["Student", "Professor", "TimeTable", "Live Attendance"])
 
-students_df = load_students()
-logs_df = load_logs()
-
 # --- SIDEBAR SYSTEM TOOLS ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("🛠️ System Tools")
@@ -1167,6 +1164,15 @@ if st.sidebar.button("Clear Cache & Refresh", use_container_width=True):
     st.cache_data.clear()
     st.success("Cache Cleared!")
     st.rerun()
+
+# --- SAFE DATA LOADING ---
+try:
+    students_df = load_students()
+    logs_df = load_logs()
+except Exception as e:
+    st.error(f"⚠️ **Google Sheets Connection issue**: {e}")
+    st.info("Google might be busy. Please wait 60 seconds and click 'Clear Cache & Refresh' in the sidebar.")
+    st.stop()
 
 # ================= STUDENT PAGE =================
 if page == "Student":
